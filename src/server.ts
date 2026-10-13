@@ -2,20 +2,13 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { createMcpHandler } from "agents/mcp/server";
 import { z } from "zod";
 
+const UCP_AGENT_PROFILE =
+  "https://ucp-agent-profile.facetimefy.com/ucp/agent-profiles/2026-08-25/valid-with-capabilities.json";
+
 const createCartInputSchema = z.object({
   shop_domain: z
     .string()
     .describe("The shop domain to call. This maps to https://{shop-domain}/api/ucp/mcp."),
-  meta: z
-    .object({
-      "ucp-agent": z.object({
-        profile: z
-          .string()
-          .url()
-          .describe("The URI to your agent's UCP profile for capability negotiation.")
-      })
-    })
-    .describe("Request metadata. You must include ucp-agent.profile."),
   cart: z
     .object({
       line_items: z
@@ -77,37 +70,10 @@ const createCartInputSchema = z.object({
     .describe("The cart object containing the cart data.")
 });
 
-const getCartInputSchema = z.object({
-  shop_domain: z
-    .string()
-    .describe("The shop domain to call. This maps to https://{shop-domain}/api/ucp/mcp."),
-  meta: z
-    .object({
-      "ucp-agent": z.object({
-        profile: z
-          .string()
-          .url()
-          .describe("The URI to your agent's UCP profile for capability negotiation.")
-      })
-    })
-    .describe("Request metadata. You must include ucp-agent.profile."),
-  id: z.string().describe("The ID of the cart to retrieve.")
-});
-
 const updateCartInputSchema = z.object({
   shop_domain: z
     .string()
     .describe("The shop domain to call. This maps to https://{shop-domain}/api/ucp/mcp."),
-  meta: z
-    .object({
-      "ucp-agent": z.object({
-        profile: z
-          .string()
-          .url()
-          .describe("The URI to your agent's UCP profile for capability negotiation.")
-      })
-    })
-    .describe("Request metadata. You must include ucp-agent.profile."),
   id: z.string().describe("The ID of the cart to update."),
   cart: z
     .object({
@@ -170,27 +136,6 @@ const updateCartInputSchema = z.object({
     )
 });
 
-const cancelCartInputSchema = z.object({
-  shop_domain: z
-    .string()
-    .describe("The shop domain to call. This maps to https://{shop-domain}/api/ucp/mcp."),
-  meta: z
-    .object({
-      "ucp-agent": z.object({
-        profile: z
-          .string()
-          .url()
-          .describe("The URI to your agent's UCP profile for capability negotiation.")
-      }),
-      "idempotency-key": z
-        .string()
-        .uuid()
-        .describe("A UUID required for retry safety.")
-    })
-    .describe("Request metadata. You must include ucp-agent.profile and idempotency-key."),
-  id: z.string().describe("The ID of the cart to cancel.")
-}); 
-
 function createServer() {
   const server = new McpServer({
     name: "carts",
@@ -203,7 +148,7 @@ function createServer() {
       description: "Create a new cart with line items and optional buyer context. Use this when the buyer asks to place selected catalog products into a cart. The response includes the merchant-assigned cart ID, validated line items, estimated totals, and a 'continue_url' for continuing on the merchant's storefront.",
       inputSchema: createCartInputSchema
     },
-    async ({ shop_domain, meta, cart }: z.infer<typeof createCartInputSchema>) => {
+    async ({ shop_domain, cart }: z.infer<typeof createCartInputSchema>) => {
       const response = await fetch(`https://${shop_domain}/api/ucp/mcp`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -211,39 +156,39 @@ function createServer() {
           jsonrpc: "2.0",
           method: "tools/call",
           id: 1,
-          params: { name: "create_cart", arguments: { meta, cart } }
+          params: {
+            name: "create_cart",
+            arguments: {
+              meta: {
+                "ucp-agent": {
+                  profile: UCP_AGENT_PROFILE
+                }
+              },
+              cart
+            }
+          }
         })
       });
-      const result = await response.json() as Record<string, unknown>;
+      const result = await response.json() as {
+        error?: unknown;
+        result?: {
+          content?: Array<{ type: "text"; text: string }>;
+          structuredContent?: Record<string, unknown>;
+          isError?: boolean;
+        };
+      };
       if ("error" in result) {
-        return { content: [{ text: JSON.stringify(result), type: "text" }], structuredContent: result, isError: true };
+        return {
+          content: [{ text: JSON.stringify(result.error), type: "text" as const }],
+          structuredContent: { error: result.error },
+          isError: true
+        };
       }
-      return { content: [{ text: JSON.stringify(result), type: "text" }], structuredContent: result };
-    }
-  );
-
-  server.registerTool(
-    "get_cart",
-    {
-      description: "Retrieve the current state of an existing cart. Use this to review its contents, refresh estimated totals, or obtain the current full state before an update. If the cart does not exist or has expired, the tool may return a successful JSON-RPC result whose messages array contains an unrecoverable error with code 'not_found'. Check the returned business outcome rather than assuming that a successful transport response means the cart exists.",
-      inputSchema: getCartInputSchema
-    },
-    async ({ shop_domain, meta, id }: z.infer<typeof getCartInputSchema>) => {
-      const response = await fetch(`https://${shop_domain}/api/ucp/mcp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          method: "tools/call",
-          id: 1,
-          params: { name: "get_cart", arguments: { meta, id } }
-        })
-      });
-      const result = await response.json() as Record<string, unknown>;
-      if ("error" in result) {
-        return { content: [{ text: JSON.stringify(result), type: "text" }], structuredContent: result, isError: true };
-      }
-      return { content: [{ text: JSON.stringify(result), type: "text" }], structuredContent: result };
+      return {
+        content: result.result?.content ?? [{ text: JSON.stringify(result.result?.structuredContent ?? {}), type: "text" as const }],
+        structuredContent: result.result?.structuredContent ?? {},
+        ...(result.result?.isError !== undefined ? { isError: result.result.isError } : {})
+      };
     }
   );
 
@@ -253,7 +198,7 @@ function createServer() {
       description: "Replace the contents of an existing cart. This tool uses PUT semantics: every request replaces the cart's full state with the supplied payload. Omitted fields, including 'line_items' or 'context', are removed. There is no server-side merge of partial updates. Preserve all existing state that the user has not asked to change.",
       inputSchema: updateCartInputSchema
     },
-    async ({ shop_domain, meta, id, cart }: z.infer<typeof updateCartInputSchema>) => {
+    async ({ shop_domain, id, cart }: z.infer<typeof updateCartInputSchema>) => {
       const response = await fetch(`https://${shop_domain}/api/ucp/mcp`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -261,39 +206,40 @@ function createServer() {
           jsonrpc: "2.0",
           method: "tools/call",
           id: 2,
-          params: { name: "update_cart", arguments: { meta, id, cart } }
+          params: {
+            name: "update_cart",
+            arguments: {
+              meta: {
+                "ucp-agent": {
+                  profile: UCP_AGENT_PROFILE
+                }
+              },
+              id,
+              cart
+            }
+          }
         })
       });
-      const result = await response.json() as Record<string, unknown>;
+      const result = await response.json() as {
+        error?: unknown;
+        result?: {
+          content?: Array<{ type: "text"; text: string }>;
+          structuredContent?: Record<string, unknown>;
+          isError?: boolean;
+        };
+      };
       if ("error" in result) {
-        return { content: [{ text: JSON.stringify(result), type: "text" }], structuredContent: result, isError: true };
+        return {
+          content: [{ text: JSON.stringify(result.error), type: "text" as const }],
+          structuredContent: { error: result.error },
+          isError: true
+        };
       }
-      return { content: [{ text: JSON.stringify(result), type: "text" }], structuredContent: result };
-    }
-  );
-
-  server.registerTool(
-    "cancel_cart",
-    {
-      description: "Cancel an active cart. Requires meta[\"idempotency-key\"] containing a UUID, in addition to meta[\"ucp-agent\"]. Cancellation removes the cart from storage. Subsequent requests for the same cart ID return a 'not_found' business outcome. Use this only when the user requests or clearly authorizes cancellation.",
-      inputSchema: cancelCartInputSchema
-    },
-    async ({ shop_domain, meta, id }: z.infer<typeof cancelCartInputSchema>) => {
-      const response = await fetch(`https://${shop_domain}/api/ucp/mcp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          method: "tools/call",
-          id: 3,
-          params: { name: "cancel_cart", arguments: { meta, id } }
-        })
-      });
-      const result = await response.json() as Record<string, unknown>;
-      if ("error" in result) {
-        return { content: [{ text: JSON.stringify(result), type: "text" }], structuredContent: result, isError: true };
-      }
-      return { content: [{ text: JSON.stringify(result), type: "text" }], structuredContent: result };
+      return {
+        content: result.result?.content ?? [{ text: JSON.stringify(result.result?.structuredContent ?? {}), type: "text" as const }],
+        structuredContent: result.result?.structuredContent ?? {},
+        ...(result.result?.isError !== undefined ? { isError: result.result.isError } : {})
+      };
     }
   );
 
