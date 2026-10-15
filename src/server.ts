@@ -145,6 +145,19 @@ const getCartInputSchema = z.object({
     .describe("The ID of the cart to retrieve.")
 });
 
+function compactCartResult(cart: Record<string, unknown>) {
+  return {
+    id: cart.id,
+    line_items: cart.line_items,
+    currency: cart.currency,
+    discounts: cart.discounts,
+    totals: cart.totals,
+    expires_at: cart.expires_at,
+    messages: cart.messages,
+    continue_url: cart.continue_url
+  };
+}
+
 function createServer() {
   const server = new McpServer({
     name: "carts",
@@ -193,9 +206,11 @@ function createServer() {
           isError: true
         };
       }
+      const compactCart = compactCartResult(result.result?.structuredContent ?? {});
+
       return {
-        content: result.result?.content ?? [{ text: JSON.stringify(result.result?.structuredContent ?? {}), type: "text" as const }],
-        structuredContent: result.result?.structuredContent ?? {},
+        content: [{ text: JSON.stringify(compactCart), type: "text" as const }],
+        structuredContent: compactCart,
         ...(result.result?.isError !== undefined ? { isError: result.result.isError } : {})
       };
     }
@@ -244,9 +259,11 @@ function createServer() {
           isError: true
         };
       }
+      const compactCart = compactCartResult(result.result?.structuredContent ?? {});
+
       return {
-        content: result.result?.content ?? [{ text: JSON.stringify(result.result?.structuredContent ?? {}), type: "text" as const }],
-        structuredContent: result.result?.structuredContent ?? {},
+        content: [{ text: JSON.stringify(compactCart), type: "text" as const }],
+        structuredContent: compactCart,
         ...(result.result?.isError !== undefined ? { isError: result.result.isError } : {})
       };
     }
@@ -294,9 +311,11 @@ function createServer() {
           isError: true
         };
       }
+      const compactCart = compactCartResult(result.result?.structuredContent ?? {});
+
       return {
-        content: result.result?.content ?? [{ text: JSON.stringify(result.result?.structuredContent ?? {}), type: "text" as const }],
-        structuredContent: result.result?.structuredContent ?? {},
+        content: [{ text: JSON.stringify(compactCart), type: "text" as const }],
+        structuredContent: compactCart,
         ...(result.result?.isError !== undefined ? { isError: result.result.isError } : {})
       };
     }
