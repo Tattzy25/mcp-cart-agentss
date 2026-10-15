@@ -22,12 +22,12 @@ const createCartInputSchema = z.object({
             item: z.object({
               id: z
                 .string()
-                .describe("The product variant id for this line item.")
+                .describe("The full Shopify product variant GID (e.g., gid://shopify/ProductVariant/12345) for this line item.")
             })
           })
         )
         .describe(
-          "Array of items to add to the cart. Each item must include quantity and an item object with the product variant id."
+          "Array of items to add to the cart. Each item must include quantity and an item object with the product variant GID."
         ),
       context: z
         .object({
@@ -36,7 +36,7 @@ const createCartInputSchema = z.object({
           postal_code: z.string().optional().describe("Localization hint for the buyer postal code.")
         })
         .describe(
-          "Localization hints including address_country, address_region, and postal_code. Merchants may use these as a signal for pricing, availability, and currency estimates, but context is not authoritative for shipping. If omitted, the merchant falls back to geo-IP."
+          "Localization hints including address_country, address_region, and postal_code. Merchants may use these as a signal for pricing, availability, and currency estimates, but context is not authoritative for shipping — collect a shipping address through Checkout MCP when the buyer is ready to purchase. If omitted, the merchant falls back to geo-IP."
         )
         .optional(),
       attribution: z
@@ -74,7 +74,7 @@ const updateCartInputSchema = z.object({
   shop_domain: z
     .string()
     .describe("The shop domain to call. This maps to https://{shop-domain}/api/ucp/mcp."),
-  id: z.string().describe("The ID of the cart to update."),
+  id: z.string().describe("The ID of the cart to update (e.g. gid://shopify/Cart/cart_abc123)."),
   cart: z
     .object({
       line_items: z
@@ -88,7 +88,7 @@ const updateCartInputSchema = z.object({
             item: z.object({
               id: z
                 .string()
-                .describe("The product variant id for this line item.")
+                .describe("The full Shopify product variant GID (e.g., gid://shopify/ProductVariant/12345) for this line item.")
             })
           })
         )
@@ -145,7 +145,7 @@ function createServer() {
   server.registerTool(
     "create_cart",
     {
-      description: "Create a new cart with line items and optional buyer context. Use this when the buyer asks to place selected catalog products into a cart. The response includes the merchant-assigned cart ID, validated line items, estimated totals, and a 'continue_url' for continuing on the merchant's storefront.",
+      description: "Create a new cart with line items and optional buyer context. Use this tool when the buyer has selected products from the Catalog and you want to build a cart before starting checkout. The response includes a cart object with the merchant-assigned id, validated line items, estimated totals, and a continue_url that the buyer can use to pick up the cart on the merchant's storefront. If you require sales channel attribution and plan to convert the cart into a checkout with create_checkout, set attribution on the cart before conversion.",
       inputSchema: createCartInputSchema
     },
     async ({ shop_domain, cart }: z.infer<typeof createCartInputSchema>) => {
@@ -195,7 +195,7 @@ function createServer() {
   server.registerTool(
     "update_cart",
     {
-      description: "Replace the contents of an existing cart. This tool uses PUT semantics: every request replaces the cart's full state with the supplied payload. Omitted fields, including 'line_items' or 'context', are removed. There is no server-side merge of partial updates. Preserve all existing state that the user has not asked to change.",
+      description: "Replace the contents of an existing cart. Caution: update_cart uses PUT semantics. Each request replaces the cart's full state with the payload you send. Omit a field (for example line_items or context) and it's removed from the cart. This differs from Storefront API and AJAX cart mutations. Preserve all existing state that the user has not asked to change.",
       inputSchema: updateCartInputSchema
     },
     async ({ shop_domain, id, cart }: z.infer<typeof updateCartInputSchema>) => {
