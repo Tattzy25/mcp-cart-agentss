@@ -136,6 +136,15 @@ const updateCartInputSchema = z.object({
     )
 });
 
+const getCartInputSchema = z.object({
+  shop_domain: z
+    .string()
+    .describe("The shop domain to call. This maps to https://{shop-domain}/api/ucp/mcp."),
+  id: z
+    .string()
+    .describe("The ID of the cart to retrieve.")
+});
+
 function createServer() {
   const server = new McpServer({
     name: "carts",
@@ -216,6 +225,56 @@ function createServer() {
               },
               id,
               cart
+            }
+          }
+        })
+      });
+      const result = await response.json() as {
+        error?: unknown;
+        result?: {
+          content?: Array<{ type: "text"; text: string }>;
+          structuredContent?: Record<string, unknown>;
+          isError?: boolean;
+        };
+      };
+      if ("error" in result) {
+        return {
+          content: [{ text: JSON.stringify(result.error), type: "text" as const }],
+          structuredContent: { error: result.error },
+          isError: true
+        };
+      }
+      return {
+        content: result.result?.content ?? [{ text: JSON.stringify(result.result?.structuredContent ?? {}), type: "text" as const }],
+        structuredContent: result.result?.structuredContent ?? {},
+        ...(result.result?.isError !== undefined ? { isError: result.result.isError } : {})
+      };
+    }
+  );
+
+  server.registerTool(
+    "get_cart",
+    {
+      description: "Retrieve the current state of an existing cart. Use this tool to refresh estimated totals after a context change, to verify the cart exists before starting checkout, or when the buyer returned to the conversation and you need the current cart contents. If the cart does not exist or has expired, the response returns a successful JSON-RPC result whose messages array contains an unrecoverable error with code not_found.",
+      inputSchema: getCartInputSchema
+    },
+    async ({ shop_domain, id }: z.infer<typeof getCartInputSchema>) => {
+      const response = await fetch(`https://${shop_domain}/api/ucp/mcp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "tools/call",
+          id: 3,
+          params: {
+            name: "get_cart",
+            arguments: {
+              meta: {
+                "ucp-agent": {
+                  profile: UCP_AGENT_PROFILE
+                }
+              },
+              id
             }
           }
         })
